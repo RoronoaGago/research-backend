@@ -255,3 +255,19 @@ class ReportRequestSerializer(serializers.Serializer):
     )
     customer_id = serializers.IntegerField(required=False)
     include_details = serializers.BooleanField(default=False)    
+    
+class CustomerFrequencySerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    first_name = serializers.CharField()
+    last_name = serializers.CharField()
+    contact_number = serializers.CharField()
+    total_transactions = serializers.IntegerField()
+    total_spent = serializers.DecimalField(max_digits=10, decimal_places=2)
+    average_spent = serializers.DecimalField(max_digits=10, decimal_places=2)
+    last_transaction_date = serializers.DateTimeField(required=False)
+    start_date = serializers.DateField(required=False)
+    end_date = serializers.DateField(required=False)
+    period = serializers.ChoiceField(
+        choices=['daily', 'weekly', 'monthly', 'custom'],
+        default='monthly'
+    )

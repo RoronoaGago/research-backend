@@ -19,5 +19,7 @@ urlpatterns = [
     ),
     path('api/dashboard/metrics/', DashboardMetricsView.as_view(), name='dashboard-metrics'),
     path('reports/sales/', views.sales_report, name='sales-report'),
-    path('reports/sales/export/', views.export_sales_report, name='export-sales-report')
+    path('reports/sales/export/', views.export_sales_report, name='export-sales-report'),
+    path('reports/customer-frequency/', views.customer_frequency_report, name='customer-frequency-report'),
+    path('reports/customer-frequency/export/', views.export_customer_frequency_report, name='export-customer-frequency-report'),
 ]

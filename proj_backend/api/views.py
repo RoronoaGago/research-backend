@@ -19,8 +19,10 @@ from .serializers import (
     DashboardMetricsSerializer,
     SalesReportSerializer,
     ReportRequestSerializer,
+    CustomerFrequencySerializer
 )
 from django.db.models.functions import TruncDate  # Add this import at the top of your file
+from django.db.models import Max  # Add this with your other imports
 @api_view(['GET', 'POST'])
 def user_list(request):
     """
@@ -376,6 +378,8 @@ def export_sales_report(request):
         for i, col in enumerate(summary_df.columns):
             max_len = max(summary_df[col].astype(str).str.len().max(), len(col)) + 2
             worksheet.set_column(i, i, max_len)
+            
+            
         
         # Format currency columns in summary
         worksheet.set_column(1, 1, None, currency_format)  # Total Sales
@@ -494,6 +498,261 @@ def export_sales_report(request):
         else:
             # Show date range
             filename = f"Sales Report ({start_fmt} - {end_fmt}).xlsx"
+    
+    response = FileResponse(
+        output,
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+    response['Access-Control-Expose-Headers'] = 'Content-Disposition'
+    response['Content-Disposition'] = f'attachment; filename="{filename}"'
+    
+    return response
+
+
+@api_view(['GET'])
+def customer_frequency_report(request):
+    """
+    Generate customer frequency report with filtering options
+    Returns customer name, contact number, total transactions, total spent, and average spent
+    """
+    # Validate request parameters
+    serializer = ReportRequestSerializer(data=request.query_params)
+    serializer.is_valid(raise_exception=True)
+    params = serializer.validated_data
+
+    # Determine date range
+    today = timezone.now().date()
+    if params['period'] == 'daily':
+        start_date = today
+        end_date = today
+    elif params['period'] == 'weekly':
+        start_date = today - timedelta(days=today.weekday())
+        end_date = start_date + timedelta(days=6)
+    elif params['period'] == 'monthly':
+        start_date = today.replace(day=1)
+        end_date = (start_date + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+    else:  # custom
+        start_date = params.get('start_date', today - timedelta(days=365))  # Default to 1 year for customer analysis
+        end_date = params.get('end_date', today)
+
+    # Base queryset - customers with transactions in the date range
+    customers = Customer.objects.filter(
+        transactions__created_at__date__gte=start_date,
+        transactions__created_at__date__lte=end_date
+    ).distinct().annotate(
+        total_transactions=Count('transactions'),
+        total_spent=Sum('transactions__grand_total'),
+        last_transaction_date=Max('transactions__created_at')
+    ).filter(total_transactions__gt=0)  # Only include customers with transactions
+
+    # Apply additional filters if provided
+    if params.get('service_type'):
+        customers = customers.filter(transactions__service_type=params['service_type'])
+    if params.get('status'):
+        customers = customers.filter(transactions__status=params['status'])
+    if params.get('customer_id'):
+        customers = customers.filter(id=params['customer_id'])
+
+    # Prepare the response data
+    report_data = []
+    for customer in customers:
+        avg_spent = customer.total_spent / customer.total_transactions if customer.total_transactions else 0
+        
+        report_data.append({
+            'id': customer.id,
+            'first_name': customer.first_name,
+            'last_name': customer.last_name,
+            'contact_number': customer.contact_number,
+            'address': customer.address,
+            'total_transactions': customer.total_transactions,
+            'total_spent': customer.total_spent,
+            'average_spent': avg_spent,
+            'last_transaction_date': customer.last_transaction_date,
+            'period': params['period'],
+            'start_date': start_date,
+            'end_date': end_date
+        })
+
+    # Sort by total spent (descending) by default
+    report_data.sort(key=lambda x: x['total_spent'], reverse=True)
+
+    # Include transaction details if requested
+    if params.get('include_details'):
+        for customer_data in report_data:
+            transactions = Transaction.objects.filter(
+                customer_id=customer_data['id'],
+                created_at__date__gte=start_date,
+                created_at__date__lte=end_date
+            ).order_by('-created_at')
+            customer_data['transactions'] = TransactionSerializer(transactions, many=True).data
+
+    # Serialize and return the response
+    return Response(CustomerFrequencySerializer(report_data, many=True).data)
+
+
+@api_view(['GET'])
+def export_customer_frequency_report(request):
+    """
+    Export customer frequency report to Excel with filtering options
+    Returns Excel file with customer frequency data
+    """
+    # Validate request parameters (same as original report)
+    serializer = ReportRequestSerializer(data=request.query_params)
+    serializer.is_valid(raise_exception=True)
+    params = serializer.validated_data
+
+    # Determine date range (same as original report)
+    today = timezone.now().date()
+    if params['period'] == 'daily':
+        start_date = today
+        end_date = today
+    elif params['period'] == 'weekly':
+        start_date = today - timedelta(days=today.weekday())
+        end_date = start_date + timedelta(days=6)
+    elif params['period'] == 'monthly':
+        start_date = today.replace(day=1)
+        end_date = (start_date + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+    else:  # custom
+        start_date = params.get('start_date', today - timedelta(days=365))
+        end_date = params.get('end_date', today)
+
+    # Get customer data (same as original report)
+    customers = Customer.objects.filter(
+        transactions__created_at__date__gte=start_date,
+        transactions__created_at__date__lte=end_date
+    ).distinct().annotate(
+        total_transactions=Count('transactions'),
+        total_spent=Sum('transactions__grand_total'),
+        last_transaction_date=Max('transactions__created_at')
+    ).filter(total_transactions__gt=0)
+
+    # Prepare data for Excel
+    data = []
+    for idx, customer in enumerate(customers, start=1):
+        avg_spent = customer.total_spent / customer.total_transactions if customer.total_transactions else 0
+        
+        data.append({
+            'Ranking': idx,
+            'Customer Name': f"{customer.first_name} {customer.last_name}",
+            'Phone Number': customer.contact_number,
+            'Total Transactions': customer.total_transactions,
+            'Total Spent': round(float(customer.total_spent), 2),  # Rounded to 2 decimal places
+            'Average Spent': round(float(avg_spent), 2),          # Rounded to 2 decimal places
+            'Last Transaction Date': customer.last_transaction_date.strftime('%Y-%m-%d') if customer.last_transaction_date else ''
+        })
+
+    # Sort by total transactions (descending)
+    data.sort(key=lambda x: x['Total Transactions'], reverse=True)
+    
+    # Update ranking after sorting
+    for idx, item in enumerate(data, start=1):
+        item['Ranking'] = idx
+
+    # Create DataFrame
+    df = pd.DataFrame(data)
+    
+    # Reorder columns
+    df = df[[
+        'Ranking',
+        'Customer Name', 
+        'Phone Number',
+        'Total Transactions',
+        'Total Spent',
+        'Average Spent',
+        'Last Transaction Date'
+    ]]
+
+    # Create Excel file in memory
+    output = BytesIO()
+    writer = pd.ExcelWriter(output, engine='xlsxwriter')
+    df.to_excel(writer, sheet_name='Customer Frequency', index=False)
+    
+
+    
+    # Get workbook and worksheet objects for formatting
+    workbook = writer.book
+    # Add number formatting (after header formatting)
+    number_format = workbook.add_format({'num_format': '#,##0.00'})  # 2 decimal places with thousands separator
+    worksheet = writer.sheets['Customer Frequency']
+    # Apply formatting to currency columns
+    worksheet.set_column('E:E', None, number_format)  # Total Spent (column E)
+    worksheet.set_column('F:F', None, number_format)  # Average Spent (column F)
+    
+    # Add formatting
+    header_format = workbook.add_format({
+        'bold': True,
+        'text_wrap': True,
+        'valign': 'top',
+        'fg_color': '#4472C4',
+        'font_color': 'white',
+        'border': 1
+    })
+    
+    # Write the column headers with the defined format
+    for col_num, value in enumerate(df.columns.values):
+        worksheet.write(0, col_num, value, header_format)
+    
+    # Auto-adjust columns' width
+    for column in df:
+        column_width = max(df[column].astype(str).map(len).max(), len(column)) + 2
+        col_idx = df.columns.get_loc(column)
+        worksheet.set_column(col_idx, col_idx, column_width)
+    
+    # Add a pie chart showing transaction distribution
+    if len(df) > 0:
+        chart_sheet_name = 'Transaction Distribution'
+        
+        # Create a summary dataframe for the chart
+        chart_df = df[['Customer Name', 'Total Transactions']].copy()
+        chart_df = chart_df.sort_values('Total Transactions', ascending=False)
+        
+        # If many customers, group smaller ones into "Others"
+        if len(chart_df) > 10:
+            top_10 = chart_df.head(10)
+            others = pd.DataFrame({
+                'Customer Name': ['Others'],
+                'Total Transactions': [chart_df['Total Transactions'][10:].sum()]
+            })
+            chart_df = pd.concat([top_10, others])
+        
+        # Write chart data to a new sheet
+        chart_df.to_excel(writer, sheet_name=chart_sheet_name, index=False)
+        
+        # Create pie chart
+        chart = workbook.add_chart({'type': 'pie'})
+        
+        # Configure the chart
+        chart.add_series({
+            'name': 'Transaction Distribution',
+            'categories': f"='{chart_sheet_name}'!$A$2:$A${len(chart_df)+1}",
+            'values': f"='{chart_sheet_name}'!$B$2:$B${len(chart_df)+1}",
+            'data_labels': {'percentage': True, 'category': True}
+        })
+        
+        chart.set_title({'name': 'Customer Transaction Distribution'})
+        chart.set_style(10)
+        
+        # Insert the chart into the worksheet
+        worksheet.insert_chart('H2', chart)
+
+    writer.close()
+    output.seek(0)
+    
+   # Format filename based on period type
+    if params['period'] == 'daily':
+        # For daily reports: "Customer Frequency Report (Apr 15 2025)"
+        filename = f"Customer Frequency Report ({pd.to_datetime(start_date).strftime('%b %d %Y')}).xlsx"
+    else:
+        # For weekly/monthly/custom: "Sales Report (Apr 1 - Apr 15 2025)"
+        start_fmt = pd.to_datetime(start_date).strftime('%b %d %Y')
+        end_fmt = pd.to_datetime(end_date).strftime('%b %d %Y')
+        
+        if start_fmt == end_fmt:
+            # If start and end are same date (shouldn't happen except daily)
+            filename = f"Customer Frequency Report ({start_fmt}).xlsx"
+        else:
+            # Show date range
+            filename = f"Customer Frequency Report ({start_fmt} - {end_fmt}).xlsx"
     
     response = FileResponse(
         output,
