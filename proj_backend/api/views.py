@@ -257,12 +257,12 @@ def export_sales_report(request):
     """
     Export sales report to Excel with filtering options
     """
-    # Validate request parameters (same as sales_report)
+    # Validate request parameters
     serializer = ReportRequestSerializer(data=request.query_params)
     serializer.is_valid(raise_exception=True)
     params = serializer.validated_data
 
-    # Determine date range (same as sales_report)
+    # Determine date range
     today = timezone.now().date()
     if params['period'] == 'daily':
         start_date = today
@@ -277,13 +277,13 @@ def export_sales_report(request):
         start_date = params.get('start_date', today - timedelta(days=30))
         end_date = params.get('end_date', today)
 
-    # Base queryset with date filtering (same as sales_report)
+    # Base queryset with date filtering
     queryset = Transaction.objects.filter(
         created_at__date__gte=start_date,
         created_at__date__lte=end_date
     ).select_related('customer')
 
-    # Apply additional filters (same as sales_report)
+    # Apply additional filters
     if params.get('service_type'):
         queryset = queryset.filter(service_type=params['service_type'])
     if params.get('status'):
@@ -308,9 +308,9 @@ def export_sales_report(request):
             'Jeans (kg)': float(t.jeans_weight),
             'Beddings (kg)': float(t.linens_weight),
             'Comforter (kg)': float(t.comforter_weight),
-            'Subtotal': float(t.subtotal),
-            'Additional Fee': float(t.additional_fee),
-            'Grand Total': float(t.grand_total),
+            'Subtotal (₱)': float(t.subtotal),
+            'Additional Fee (₱)': float(t.additional_fee),
+            'Grand Total (₱)': float(t.grand_total),
         })
 
     # Create summary data
@@ -318,48 +318,35 @@ def export_sales_report(request):
     total_transactions = queryset.count()
     average_sale = total_sales / total_transactions if total_transactions else 0
     
-    summary_data = {
-        'Report Period': f"{start_date} to {end_date}",
-        'Total Sales': total_sales,
-        'Total Transactions': total_transactions,
-        'Average Sale': average_sale,
-    }
-
-    # Service type breakdown
-    service_breakdown = queryset.values('service_type').annotate(
-        total=Sum('grand_total'),
-        count=Count('id')
-    ).order_by('-total')
-    
-    # Status breakdown
-    status_breakdown = queryset.values('status').annotate(
-        count=Count('id')
-    ).order_by('-count')
-
-    # Get daily sales data for the chart
-    daily_sales = queryset.annotate(
+    # Get daily sales and transaction data for the charts
+    daily_data = queryset.annotate(
         date=TruncDate('created_at')
     ).values('date').annotate(
         daily_total=Sum('grand_total'),
         transaction_count=Count('id')
     ).order_by('date')
-
+    
     # Create Excel file in memory
     output = BytesIO()
     
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         workbook = writer.book
         
-        # Format for currency
+        # Format for currency and styling
         currency_format = workbook.add_format({'num_format': '#,##0.00'})
         bold_format = workbook.add_format({'bold': True})
+        header_format = workbook.add_format({
+            'bold': True,
+            'bg_color': '#f8f9fa',
+            'border': 1
+        })
         
         # Write transactions sheet
         if data:
             df = pd.DataFrame(data)
             df.to_excel(writer, sheet_name='Transactions', index=False)
             
-            # Auto-adjust columns' width for Transactions sheet
+            # Auto-adjust columns' width and format
             worksheet = writer.sheets['Transactions']
             for i, col in enumerate(df.columns):
                 max_len = max(df[col].astype(str).str.len().max(), len(col)) + 2
@@ -372,10 +359,17 @@ def export_sales_report(request):
                     col_idx = df.columns.get_loc(col)
                     worksheet.set_column(col_idx, col_idx, None, currency_format)
         
-        # Write summary sheet with better formatting
-        summary_df = pd.DataFrame([summary_data])
-        summary_df.to_excel(writer, sheet_name='Summary', index=False)
+        # Create combined summary sheet with charts
+        summary_data = {
+            'Report Period': f"{start_date} to {end_date}",
+            'Total Sales (₱)': total_sales,
+            'Total Transactions': total_transactions,
+            'Average Sale (₱)': average_sale,
+        }
         
+        # Write summary data
+        summary_df = pd.DataFrame([summary_data])
+        summary_df.to_excel(writer, sheet_name='Summary', startrow=0, index=False)
         worksheet = writer.sheets['Summary']
         
         # Format summary sheet
@@ -387,93 +381,125 @@ def export_sales_report(request):
         worksheet.set_column(1, 1, None, currency_format)  # Total Sales
         worksheet.set_column(3, 3, None, currency_format)  # Average Sale
         
-        # Add daily sales chart to summary sheet
-        if daily_sales:
-            # Create a DataFrame for daily sales
-            daily_df = pd.DataFrame(list(daily_sales))
-            daily_df['date'] = pd.to_datetime(daily_df['date'])
-            daily_df.sort_values('date', inplace=True)
+        # Add charts if we have daily data
+        if daily_data:
+            # Create DataFrame for daily data
+            daily_df = pd.DataFrame(list(daily_data))
+             # Convert to datetime and format as "Apr. 12" style
+            #  daily_df['date'] = pd.to_datetime(daily_df['date']).dt.strftime('%Y-%m-%d')
+            daily_df['date'] = pd.to_datetime(daily_df['date']).dt.strftime('%b. %d')
+            # Convert daily_total to numeric - handles various cases
+        if pd.api.types.is_numeric_dtype(daily_df['daily_total']):
+            # Already numeric, just ensure it's float
+            daily_df['daily_total'] = daily_df['daily_total'].astype(float)
+        else:
+            # Not numeric - convert to string first, then clean and convert to float
+            daily_df['daily_total'] = (
+                daily_df['daily_total'].astype(str)
+                .str.replace('[^\\d.]', '', regex=True)  # Remove non-numeric chars
+                .replace('', '0')  # Handle empty strings
+                .astype(float)
+            )
+            # Rename columns to desired display names
+            daily_df = daily_df.rename(columns={
+                'date': 'Date',
+                'daily_total': 'Daily Total (₱)',
+                'transaction_count': 'Transaction Count'
+            })
+    
+            daily_df.sort_values('Date', inplace=True)
             
-            # Write daily sales data to a new sheet
-            daily_df.to_excel(writer, sheet_name='Daily Sales', index=False)
+            # Write daily data below summary (starting at row 5)
+            daily_df.to_excel(writer, sheet_name='Summary', startrow=5, index=False)
+            # Get the last row number
+            last_row = len(daily_df) + 6  # +5 because we started at row 5
             
-            # Create a chart
-            chart = workbook.add_chart({'type': 'line'})
+            # Create bar chart for sales
+            sales_chart = workbook.add_chart({'type': 'column'})  # Changed to bar chart
             
-            # Configure the chart
-            chart.add_series({
+            sales_chart.add_series({
                 'name': 'Daily Sales',
-                'categories': '=Daily Sales!$A$2:$A${}'.format(len(daily_df)+1),
-                'values': '=Daily Sales!$B$2:$B${}'.format(len(daily_df)+1),
-                'marker': {'type': 'circle', 'size': 5},
-                'line': {'width': 2},
+                'categories': f"=Summary!$A$7:$A${last_row}",  # Start from row 6
+                'values': f"=Summary!$B$7:$B${last_row}",
+                'fill': {'color': '#465FFF'},
+                'border': {'color': '#465FFF'},
             })
             
-            # Configure chart axes
-            chart.set_x_axis({
-                'name': 'Date',
-                'date_axis': True,
-                'num_format': 'yyyy-mm-dd',
-            })
-            chart.set_y_axis({
-                'name': 'Total Sales',
+            # Configure X-axis - SIMPLIFIED
+            sales_chart.set_x_axis({
+        'text_axis': True,  # Treat as text categories
+        'labels': {'rotate': -45}
+    })
+            sales_chart.set_y_axis({
+                'name': 'Total Sales (₱)',  # Add currency symbol
                 'num_format': '#,##0.00',
             })
+            sales_chart.set_title({'name': 'Daily Sales'})
+            sales_chart.set_legend({'none': True})  # Cleaner look
+
             
-            # Set chart title
-            chart.set_title({'name': 'Daily Sales Trend'})
+            # Create line chart for transactions
+            transactions_chart = workbook.add_chart({'type': 'line'})
             
-            # Insert the chart into the summary sheet
-            worksheet.insert_chart('F2', chart, {'x_scale': 2, 'y_scale': 2})
-        
-        # Write service breakdown sheet
-        service_df = pd.DataFrame(service_breakdown)
-        if not service_df.empty:
-            service_df['service_type'] = service_df['service_type'].apply(
-                lambda x: dict(Transaction.SERVICE_CHOICES).get(x, x))
-            service_df.rename(columns={
-                'service_type': 'Service Type',
-                'total': 'Total Sales',
-                'count': 'Transaction Count'
-            }, inplace=True)
-            service_df.to_excel(writer, sheet_name='Service Breakdown', index=False)
+            transactions_chart.add_series({
+                'name': 'Daily Transactions',
+                'categories': f"=Summary!$A$7:$A${last_row}",
+                'values': f"=Summary!$C$7:$C${last_row}",
+                'line': {'color': '#465FFF', 'width': 3},
+                'marker': {
+                    'type': 'circle',
+                    'fill': {'color': '#FFFFFF'},  # White fill
+                    'line': {'color': '#3B82F6', 'width': 2},  # Blue border
+                    'size': 7,
+                },
+            })
             
-            # Auto-adjust columns' width for Service Breakdown sheet
-            worksheet = writer.sheets['Service Breakdown']
-            for i, col in enumerate(service_df.columns):
-                max_len = max(service_df[col].astype(str).str.len().max(), len(col)) + 2
-                worksheet.set_column(i, i, max_len)
+            transactions_chart.set_x_axis({
+                # 'name': 'Date',
+                'date_axis': True,
+                'num_format': 'mmm dd',
+                'text_axis': False,
+                'labels': {
+        'show': True,
+        'rotate': -45,  # Match the rotation of sales chart
+    }
+            })
+            transactions_chart.set_y_axis({
+                'name': 'Transaction Count',
+                'min': 0,  # Ensure chart starts at 0
+                'num_format': '0',  # Force integer format
+        })
+            transactions_chart.set_legend({'none': True})  # Cleaner look
+            transactions_chart.set_title({'name': 'Daily Transaction'})
             
-            # Format currency column
-            if 'Total Sales' in service_df.columns:
-                col_idx = service_df.columns.get_loc('Total Sales')
-                worksheet.set_column(col_idx, col_idx, None, currency_format)
-        
-        # Write status breakdown sheet
-        status_df = pd.DataFrame(status_breakdown)
-        if not status_df.empty:
-            status_df['status'] = status_df['status'].apply(
-                lambda x: dict(Transaction.STATUS_CHOICES).get(x, x))
-            status_df.rename(columns={
-                'status': 'Status',
-                'count': 'Transaction Count'
-            }, inplace=True)
-            status_df.to_excel(writer, sheet_name='Status Breakdown', index=False)
-            
-            # Auto-adjust columns' width for Status Breakdown sheet
-            worksheet = writer.sheets['Status Breakdown']
-            for i, col in enumerate(status_df.columns):
-                max_len = max(status_df[col].astype(str).str.len().max(), len(col)) + 2
-                worksheet.set_column(i, i, max_len)
+            # Insert charts into summary sheet
+            worksheet.insert_chart('F2', sales_chart, {'x_scale': 1.5, 'y_scale': 1})
+            worksheet.insert_chart('F20', transactions_chart, {'x_scale': 1.5, 'y_scale': 1})
 
     # Prepare response
     output.seek(0)
-    filename = f"sales_report_{start_date}_to_{end_date}.xlsx"
+
+    # Format filename based on period type
+    if params['period'] == 'daily':
+        # For daily reports: "Sales Report (Apr 15 2025)"
+        filename = f"Sales Report ({pd.to_datetime(start_date).strftime('%b %d %Y')}).xlsx"
+    else:
+        # For weekly/monthly/custom: "Sales Report (Apr 1 - Apr 15 2025)"
+        start_fmt = pd.to_datetime(start_date).strftime('%b %d %Y')
+        end_fmt = pd.to_datetime(end_date).strftime('%b %d %Y')
+        
+        if start_fmt == end_fmt:
+            # If start and end are same date (shouldn't happen except daily)
+            filename = f"Sales Report ({start_fmt}).xlsx"
+        else:
+            # Show date range
+            filename = f"Sales Report ({start_fmt} - {end_fmt}).xlsx"
     
     response = FileResponse(
         output,
         content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     )
+    response['Access-Control-Expose-Headers'] = 'Content-Disposition'
     response['Content-Disposition'] = f'attachment; filename="{filename}"'
     
     return response
