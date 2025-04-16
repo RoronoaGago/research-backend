@@ -215,8 +215,11 @@ class TransactionCreateSerializer(serializers.ModelSerializer):
 class DashboardMetricsSerializer(serializers.Serializer):
     total_sales = serializers.DecimalField(max_digits=10, decimal_places=2)
     total_transactions = serializers.IntegerField()
+    start_date = serializers.DateField()
+    end_date = serializers.DateField()
     ongoing_services = serializers.IntegerField()
     recent_transactions = serializers.SerializerMethodField()
+    transactions = serializers.ListField(child=serializers.DictField(), required=False)
 
     def get_recent_transactions(self, obj):
         from .serializers import TransactionSerializer
@@ -257,17 +260,25 @@ class ReportRequestSerializer(serializers.Serializer):
     include_details = serializers.BooleanField(default=False)    
     
 class CustomerFrequencySerializer(serializers.Serializer):
-    id = serializers.IntegerField()
-    first_name = serializers.CharField()
-    last_name = serializers.CharField()
-    contact_number = serializers.CharField()
+    period = serializers.CharField()
+    start_date = serializers.DateField()
+    end_date = serializers.DateField()
+    total_customers = serializers.IntegerField()
     total_transactions = serializers.IntegerField()
     total_spent = serializers.DecimalField(max_digits=10, decimal_places=2)
     average_spent = serializers.DecimalField(max_digits=10, decimal_places=2)
-    last_transaction_date = serializers.DateTimeField(required=False)
-    start_date = serializers.DateField(required=False)
-    end_date = serializers.DateField(required=False)
-    period = serializers.ChoiceField(
-        choices=['daily', 'weekly', 'monthly', 'custom'],
-        default='monthly'
+    # Breakdown fields similar to SalesReport
+    customer_breakdown = serializers.ListField(
+        child=serializers.DictField(),
+        help_text="List of customers with their individual metrics"
+    )
+    spending_breakdown = serializers.DictField(
+        help_text="Breakdown by spending ranges (high, medium, low)"
+    )
+    frequency_breakdown = serializers.DictField(
+        help_text="Breakdown by transaction frequency"
+    )
+    transactions = serializers.ListField(
+        child=serializers.DictField(), 
+        required=False
     )

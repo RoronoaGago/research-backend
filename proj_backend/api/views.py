@@ -144,10 +144,14 @@ class DashboardMetricsView(APIView):
         # Calculate metrics for this month
         today = timezone.now()
         first_day_of_month = today.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        start_date = today.replace(day=1)
+        end_date = (start_date + timedelta(days=32)).replace(day=1) - timedelta(days=1)
         
         # Get all metrics in a single query where possible
+        # Base queryset with date filtering
         monthly_transactions = Transaction.objects.filter(
-            created_at__gte=first_day_of_month
+        created_at__date__gte=start_date,
+        created_at__date__lte=end_date
         )
         
         total_sales = monthly_transactions.aggregate(
@@ -163,8 +167,14 @@ class DashboardMetricsView(APIView):
         data = {
             'total_sales': float(total_sales),  # Convert Decimal to float for JSON serialization
             'total_transactions': total_transactions,
+            'start_date': start_date.date(),  # Convert to date
+            'end_date': end_date.date(),      # Convert to date
             'ongoing_services': ongoing_services,
-            'month': first_day_of_month.strftime('%B %Y')
+            'month': first_day_of_month.strftime('%B %Y'),
+            'transactions': TransactionSerializer(
+            monthly_transactions.order_by('-created_at'),
+            many=True
+        ).data
         }
         
         serializer = DashboardMetricsSerializer(data)
@@ -553,41 +563,69 @@ def customer_frequency_report(request):
     if params.get('customer_id'):
         customers = customers.filter(id=params['customer_id'])
 
-    # Prepare the response data
-    report_data = []
+    # Calculate aggregate metrics
+    total_customers = customers.count()
+    overall_total_spent = customers.aggregate(total=Sum('total_spent'))['total'] or 0
+    overall_total_transactions = customers.aggregate(total=Sum('total_transactions'))['total'] or 0
+    overall_avg_spent = overall_total_spent / overall_total_transactions if overall_total_transactions else 0
+
+    # Prepare customer breakdown
+    customer_breakdown = []
     for customer in customers:
         avg_spent = customer.total_spent / customer.total_transactions if customer.total_transactions else 0
-        
-        report_data.append({
+        customer_breakdown.append({
             'id': customer.id,
             'first_name': customer.first_name,
             'last_name': customer.last_name,
             'contact_number': customer.contact_number,
-            'address': customer.address,
             'total_transactions': customer.total_transactions,
             'total_spent': customer.total_spent,
             'average_spent': avg_spent,
-            'last_transaction_date': customer.last_transaction_date,
-            'period': params['period'],
-            'start_date': start_date,
-            'end_date': end_date
+            'last_transaction_date': customer.last_transaction_date
         })
 
-    # Sort by total spent (descending) by default
-    report_data.sort(key=lambda x: x['total_spent'], reverse=True)
+    # Prepare spending breakdown (example)
+    spending_breakdown = {
+        'high': customers.filter(total_spent__gte=1000).count(),
+        'medium': customers.filter(total_spent__gte=500, total_spent__lt=1000).count(),
+        'low': customers.filter(total_spent__lt=500).count()
+    }
+
+    # Prepare frequency breakdown (example)
+    frequency_breakdown = {
+        'frequent': customers.filter(total_transactions__gte=5).count(),
+        'occasional': customers.filter(total_transactions__gte=2, total_transactions__lt=5).count(),
+        'one_time': customers.filter(total_transactions=1).count()
+    }
+
+    # Prepare the response data (now structured like SalesReport)
+    report_data = {
+        'period': params['period'],
+        'start_date': start_date,
+        'end_date': end_date,
+        'total_customers': total_customers,
+        'total_transactions': overall_total_transactions,
+        'total_spent': overall_total_spent,
+        'average_spent': overall_avg_spent,
+        'customer_breakdown': customer_breakdown,
+        'spending_breakdown': spending_breakdown,
+        'frequency_breakdown': frequency_breakdown
+    }
 
     # Include transaction details if requested
     if params.get('include_details'):
-        for customer_data in report_data:
-            transactions = Transaction.objects.filter(
-                customer_id=customer_data['id'],
-                created_at__date__gte=start_date,
-                created_at__date__lte=end_date
-            ).order_by('-created_at')
-            customer_data['transactions'] = TransactionSerializer(transactions, many=True).data
+        transactions = Transaction.objects.filter(
+            created_at__date__gte=start_date,
+            created_at__date__lte=end_date
+        )
+        if params.get('customer_id'):
+            transactions = transactions.filter(customer_id=params['customer_id'])
+        report_data['transactions'] = TransactionSerializer(
+            transactions.order_by('-created_at'),
+            many=True
+        ).data
 
-    # Serialize and return the response
-    return Response(CustomerFrequencySerializer(report_data, many=True).data)
+    return Response(CustomerFrequencySerializer(report_data).data)
 
 
 @api_view(['GET'])
