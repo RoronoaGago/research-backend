@@ -19,7 +19,9 @@ from .serializers import (
     DashboardMetricsSerializer,
     SalesReportSerializer,
     ReportRequestSerializer,
-    CustomerFrequencySerializer
+    CustomerFrequencySerializer,
+    PublicTransactionSerializer,
+    RatingSerializer
 )
 from django.db.models.functions import TruncDate  # Add this import at the top of your file
 from django.db.models import Max  # Add this with your other imports
@@ -800,3 +802,51 @@ def export_customer_frequency_report(request):
     response['Content-Disposition'] = f'attachment; filename="{filename}"'
     
     return response
+
+@api_view(['GET'])  # Explicitly specifying GET method
+def customer_transaction_lookup(request, transaction_id):
+    """
+    API endpoint for customers to lookup their transaction details by ID
+    
+    Returns:
+    - 200 OK: Transaction found (returns transaction data)
+    - 400 Bad Request: Invalid transaction ID (empty, non-integer, or <= 0)
+    - 404 Not Found: Transaction not found
+    """
+    # Check for empty/None transaction_id
+    if not transaction_id:
+        return Response(
+            {"error": "Transaction ID is required and cannot be empty"},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    try:
+        # Validate the transaction_id is a positive integer
+        transaction_id = int(transaction_id)
+        if transaction_id <= 0:
+            raise ValueError
+    except ValueError:
+        return Response(
+            {"error": "Transaction ID must be a positive integer"}, 
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    # Get the transaction or return 404
+    transaction = get_object_or_404(Transaction, id=transaction_id)
+    
+    # Serialize the transaction data
+    serializer = PublicTransactionSerializer(transaction)
+    return Response(serializer.data, status=status.HTTP_200_OK)
+
+@api_view(['POST'])
+def submit_rating(request, transaction_id):
+    transaction = get_object_or_404(Transaction, id=transaction_id)
+    serializer = RatingSerializer(
+        data=request.data,
+        context={'transaction': transaction}  # Pass transaction for validation
+    )
+    
+    if serializer.is_valid():
+        serializer.save(transaction=transaction)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)

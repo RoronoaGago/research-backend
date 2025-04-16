@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import User, Transaction, Customer
+from .models import User, Transaction, Customer, Rating
 import uuid
 
 
@@ -282,3 +282,50 @@ class CustomerFrequencySerializer(serializers.Serializer):
         child=serializers.DictField(), 
         required=False
     )
+    
+class PublicTransactionSerializer(serializers.ModelSerializer):
+    service_type = serializers.CharField(source='get_service_type_display')
+    status = serializers.CharField(source='get_status_display')
+    customer = CustomerSerializer()
+    
+    class Meta:
+        model = Transaction
+        fields = [
+            'id',
+            'customer',
+            'service_type',
+            'status',
+            'regular_clothes_weight',
+            'jeans_weight',
+            'linens_weight',
+            'comforter_weight',
+            'subtotal',
+            'additional_fee',
+            'grand_total',
+            'created_at',
+            'updated_at',
+            'completed_at'
+        ]
+        read_only_fields = fields  # All fields are read-only for customers    
+    
+
+class RatingSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Rating
+        fields = ['rating']
+        extra_kwargs = {
+            'rating': {
+                'min_value': 1,
+                'max_value': 5,
+                'error_messages': {
+                    'min_value': 'Rating must be at least 1',
+                    'max_value': 'Rating cannot be more than 5'
+                }
+            }
+        }
+    
+    def validate(self, data):
+        # Ensure one rating per transaction
+        if self.instance is None and Rating.objects.filter(transaction=self.context['transaction']).exists():
+            raise serializers.ValidationError("This transaction already has a rating.")
+        return data   

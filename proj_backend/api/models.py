@@ -1,6 +1,6 @@
 from django.db import models
 from django.utils import timezone
-
+from django.core.validators import MinValueValidator, MaxValueValidator
 
 class User(models.Model):
     first_name = models.CharField(max_length=100)
@@ -84,3 +84,21 @@ class Transaction(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+        
+class Rating(models.Model):
+    transaction = models.OneToOneField(
+        Transaction,  # or your actual Transaction model import
+        on_delete=models.CASCADE,
+        related_name='rating'
+    )
+    rating = models.PositiveSmallIntegerField(
+        validators=[MinValueValidator(1), MaxValueValidator(5)]  # 1-5 star rating
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Rating {self.rating} for Transaction #{self.transaction.id}"

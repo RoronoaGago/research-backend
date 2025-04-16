@@ -22,4 +22,14 @@ urlpatterns = [
     path('reports/sales/export/', views.export_sales_report, name='export-sales-report'),
     path('reports/customer-frequency/', views.customer_frequency_report, name='customer-frequency-report'),
     path('reports/customer-frequency/export/', views.export_customer_frequency_report, name='export-customer-frequency-report'),
+     path(
+        'customer/transactions/<int:transaction_id>/',
+        views.customer_transaction_lookup,
+        name='customer-transaction-lookup'
+    ),
+     path(
+        'transactions/<int:transaction_id>/rate/',
+        views.submit_rating,
+        name='submit-rating'
+    ),
 ]
