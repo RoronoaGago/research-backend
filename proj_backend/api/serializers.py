@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from .models import User, Transaction, Customer, Rating
 import uuid
+from django.contrib.auth.hashers import make_password
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -15,20 +16,17 @@ class UserSerializer(serializers.ModelSerializer):
             "date_of_birth",
             "email",
             "phone_number",
-            "created_at",
-            "updated_at",
+            
         ]
         extra_kwargs = {
             "password": {"write_only": True},
-            "created_at": {"read_only": True},
-            "updated_at": {"read_only": True},
+            
         }
 
     def create(self, validated_data):
-        # In a real app, you'd hash the password here
-        # For simplicity, we're storing it as-is (NOT recommended for production)
-        user = User.objects.create(**validated_data)
-        return user
+         # Hash password before saving
+        validated_data['password'] = make_password(validated_data['password'])
+        return super().create(validated_data)
 
     def update(self, instance, validated_data):
         instance.first_name = validated_data.get("first_name", instance.first_name)
@@ -42,9 +40,21 @@ class UserSerializer(serializers.ModelSerializer):
         instance.phone_number = validated_data.get(
             "phone_number", instance.phone_number
         )
+        
+        # Hash password if it's being updated
+        if 'password' in validated_data:
+            validated_data['password'] = make_password(validated_data['password'])
         instance.save()
-        return instance
-
+        return super().update(instance, validated_data)
+        
+class LoginSerializer(serializers.Serializer):
+    username = serializers.CharField(max_length=150, required=True)
+    password = serializers.CharField(
+        max_length=128, 
+        write_only=True, 
+        required=True,
+        style={'input_type': 'password'}
+    )    
 
 class CustomerSerializer(serializers.ModelSerializer):
     class Meta:
@@ -329,3 +339,5 @@ class RatingSerializer(serializers.ModelSerializer):
         if self.instance is None and Rating.objects.filter(transaction=self.context['transaction']).exists():
             raise serializers.ValidationError("This transaction already has a rating.")
         return data   
+    
+    

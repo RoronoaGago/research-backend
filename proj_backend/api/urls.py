@@ -1,6 +1,6 @@
 from django.urls import path
 from . import views
-from .views import DashboardMetricsView
+from .views import DashboardMetricsView, LoginAPIView
 
 urlpatterns = [
     # User URLs
@@ -32,4 +32,5 @@ urlpatterns = [
         views.submit_rating,
         name='submit-rating'
     ),
+   path('login/', LoginAPIView.as_view(), name='login'),  
 ]

@@ -21,17 +21,58 @@ from .serializers import (
     ReportRequestSerializer,
     CustomerFrequencySerializer,
     PublicTransactionSerializer,
-    RatingSerializer
+    RatingSerializer,
+    LoginSerializer
 )
 from django.db.models.functions import TruncDate  # Add this import at the top of your file
 from django.db.models import Max  # Add this with your other imports
+from django.contrib.auth import authenticate, login
+from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework.permissions import AllowAny
+import logging
+logger = logging.getLogger(__name__)
+
+
+
+class LoginAPIView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = LoginSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)  # Auto-returns 400 on invalid
+        
+        user = authenticate(
+            request,
+            username=serializer.validated_data["username"],
+            password=serializer.validated_data["password"]
+        )
+        if not user:
+            return Response(
+                {"error": "Invalid credentials"}, 
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+
+        refresh = RefreshToken.for_user(user)
+        return Response({
+            "user": {
+                "id": user.id,
+                "username": user.username,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+            },
+            "tokens": {
+                "access": str(refresh.access_token),
+                "refresh": str(refresh),
+            }
+        })
+
 @api_view(['GET', 'POST'])
 def user_list(request):
     """
     List all users or create a new user
     """
     if request.method == 'GET':
-        users = User.objects.all().order_by('-created_at')
+        users = User.objects.all().order_by('-date_joined')
         serializer = UserSerializer(users, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
     
