@@ -26,7 +26,7 @@ class UserSerializer(serializers.ModelSerializer):
         ]
         extra_kwargs = {
             "password": {
-                "write_only": True,
+                "write_only": False,
                 "min_length": 8,  # Enforce minimum length
                 "style": {"input_type": "password"}  # Hide in browsable API
             },
@@ -36,11 +36,10 @@ class UserSerializer(serializers.ModelSerializer):
         }
 
     def validate_email(self, value):
-        """Ensure email is unique (if not already handled by model)"""
-        if User.objects.filter(email__iexact=value).exists():
+        if self.instance and User.objects.filter(email__iexact=value).exclude(pk=self.instance.pk).exists():
             raise serializers.ValidationError(
                 "A user with this email already exists.")
-        return value.lower()  # Normalize email
+        return value.lower()
 
     def create(self, validated_data):
         """Handle extra fields from custom User model"""
@@ -52,12 +51,11 @@ class UserSerializer(serializers.ModelSerializer):
         return user
 
     def update(self, instance, validated_data):
-        """Handle partial updates safely"""
         password = validated_data.pop('password', None)
         user = super().update(instance, validated_data)
 
         if password:
-            user.set_password(password)
+            user.set_password(password)  # Hashes the new password
             user.save()
 
         return user
