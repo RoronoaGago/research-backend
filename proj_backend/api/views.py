@@ -1,3 +1,4 @@
+from .serializers import CustomTokenObtainPairSerializer
 from datetime import datetime, timedelta
 from rest_framework.decorators import api_view
 from rest_framework.views import APIView
@@ -12,8 +13,8 @@ from django.http import FileResponse
 from io import BytesIO
 from .models import User, Customer, Transaction
 from .serializers import (
-    UserSerializer, 
-    TransactionSerializer, 
+    UserSerializer,
+    TransactionSerializer,
     TransactionCreateSerializer,
     CustomerSerializer,
     DashboardMetricsSerializer,
@@ -24,47 +25,29 @@ from .serializers import (
     RatingSerializer,
     LoginSerializer
 )
-from django.db.models.functions import TruncDate  # Add this import at the top of your file
+# Add this import at the top of your file
+from django.db.models.functions import TruncDate
 from django.db.models import Max  # Add this with your other imports
 from django.contrib.auth import authenticate, login
 from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from rest_framework_simplejwt.views import TokenObtainPairView
 import logging
 logger = logging.getLogger(__name__)
 
 
+class ProtectedView(APIView):
+    permission_classes = [IsAuthenticated]
 
-class LoginAPIView(APIView):
-    permission_classes = [AllowAny]
+    def get(self, request):
+        content = {'message': 'Hello, World! This is a protected view!'}
+        return Response(content)
 
-    def post(self, request):
-        serializer = LoginSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)  # Auto-returns 400 on invalid
-        
-        user = authenticate(
-            request,
-            username=serializer.validated_data["username"],
-            password=serializer.validated_data["password"]
-        )
-        if not user:
-            return Response(
-                {"error": "Invalid credentials"}, 
-                status=status.HTTP_401_UNAUTHORIZED
-            )
 
-        refresh = RefreshToken.for_user(user)
-        return Response({
-            "user": {
-                "id": user.id,
-                "username": user.username,
-                "first_name": user.first_name,
-                "last_name": user.last_name,
-            },
-            "tokens": {
-                "access": str(refresh.access_token),
-                "refresh": str(refresh),
-            }
-        })
+class CustomTokenObtainPairView(TokenObtainPairView):
+    serializer_class = CustomTokenObtainPairSerializer
+
 
 @api_view(['GET', 'POST'])
 def user_list(request):
@@ -75,7 +58,7 @@ def user_list(request):
         users = User.objects.all().order_by('-date_joined')
         serializer = UserSerializer(users, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
-    
+
     elif request.method == 'POST':
         serializer = UserSerializer(data=request.data)
         if serializer.is_valid():
@@ -83,27 +66,29 @@ def user_list(request):
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+
 @api_view(['GET', 'PUT', 'DELETE'])
 def user_detail(request, pk):
     """
     Retrieve, update or delete a user instance
     """
     user = get_object_or_404(User, pk=pk)
-    
+
     if request.method == 'GET':
         serializer = UserSerializer(user)
         return Response(serializer.data, status=status.HTTP_200_OK)
-    
+
     elif request.method == 'PUT':
         serializer = UserSerializer(user, data=request.data, partial=True)
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    
+
     elif request.method == 'DELETE':
         user.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
 
 @api_view(['PUT'])
 def update_customer(request, pk):
@@ -117,16 +102,18 @@ def update_customer(request, pk):
         return Response(serializer.data, status=status.HTTP_200_OK)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+
 @api_view(['GET', 'POST'])
 def transaction_list(request):
     """
     List all transactions or create a new transaction
     """
     if request.method == 'GET':
-        transactions = Transaction.objects.select_related('customer').order_by('-created_at')
+        transactions = Transaction.objects.select_related(
+            'customer').order_by('-created_at')
         serializer = TransactionSerializer(transactions, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
-    
+
     elif request.method == 'POST':
         serializer = TransactionCreateSerializer(data=request.data)
         if serializer.is_valid():
@@ -135,27 +122,30 @@ def transaction_list(request):
             return Response(full_serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+
 @api_view(['GET', 'PUT', 'DELETE'])
 def transaction_detail(request, pk):
     """
     Retrieve, update or delete a transaction instance
     """
     transaction = get_object_or_404(Transaction, pk=pk)
-    
+
     if request.method == 'GET':
         serializer = TransactionSerializer(transaction)
         return Response(serializer.data, status=status.HTTP_200_OK)
-    
+
     elif request.method == 'PUT':
-        serializer = TransactionSerializer(transaction, data=request.data, partial=True)
+        serializer = TransactionSerializer(
+            transaction, data=request.data, partial=True)
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    
+
     elif request.method == 'DELETE':
         transaction.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
 
 @api_view(['POST'])
 def update_transaction_status(request, pk):
@@ -164,65 +154,71 @@ def update_transaction_status(request, pk):
     """
     transaction = get_object_or_404(Transaction, pk=pk)
     new_status = request.data.get('status')
-    
+
     if not new_status or new_status not in dict(Transaction.STATUS_CHOICES).keys():
         return Response(
             {'error': 'Invalid status'},
             status=status.HTTP_400_BAD_REQUEST
         )
-    
+
     transaction.status = new_status
     if new_status == 'completed':
         transaction.completed_at = timezone.now()
     transaction.save()
-    
+
     serializer = TransactionSerializer(transaction)
     return Response(serializer.data, status=status.HTTP_200_OK)
+
 
 class DashboardMetricsView(APIView):
     """
     API endpoint that returns dashboard metrics
     """
+
     def get(self, request):
         # Calculate metrics for this month
         today = timezone.now()
-        first_day_of_month = today.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        first_day_of_month = today.replace(
+            day=1, hour=0, minute=0, second=0, microsecond=0)
         start_date = today.replace(day=1)
-        end_date = (start_date + timedelta(days=32)).replace(day=1) - timedelta(days=1)
-        
+        end_date = (start_date + timedelta(days=32)
+                    ).replace(day=1) - timedelta(days=1)
+
         # Get all metrics in a single query where possible
         # Base queryset with date filtering
         monthly_transactions = Transaction.objects.filter(
-        created_at__date__gte=start_date,
-        created_at__date__lte=end_date
+            created_at__date__gte=start_date,
+            created_at__date__lte=end_date
         )
-        
+
         total_sales = monthly_transactions.aggregate(
             total=Sum('grand_total')
         )['total'] or 0
-        
+
         total_transactions = monthly_transactions.count()
-        
+
         ongoing_services = Transaction.objects.filter(
             status__in=['pending', 'in_progress']
         ).count()
-        
+
         data = {
-            'total_sales': float(total_sales),  # Convert Decimal to float for JSON serialization
+            # Convert Decimal to float for JSON serialization
+            'total_sales': float(total_sales),
             'total_transactions': total_transactions,
             'start_date': start_date.date(),  # Convert to date
             'end_date': end_date.date(),      # Convert to date
             'ongoing_services': ongoing_services,
             'month': first_day_of_month.strftime('%B %Y'),
             'transactions': TransactionSerializer(
-            monthly_transactions.order_by('-created_at'),
-            many=True
-        ).data
+                monthly_transactions.order_by('-created_at'),
+                many=True
+            ).data
         }
-        
+
         serializer = DashboardMetricsSerializer(data)
         return Response(serializer.data, status=status.HTTP_200_OK)
-    
+
+
 @api_view(['GET'])
 def sales_report(request):
     """
@@ -243,7 +239,8 @@ def sales_report(request):
         end_date = start_date + timedelta(days=6)
     elif params['period'] == 'monthly':
         start_date = today.replace(day=1)
-        end_date = (start_date + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+        end_date = (start_date + timedelta(days=32)
+                    ).replace(day=1) - timedelta(days=1)
     else:  # custom
         start_date = params.get('start_date', today - timedelta(days=30))
         end_date = params.get('end_date', today)
@@ -307,6 +304,7 @@ def sales_report(request):
     # Serialize and return response
     return Response(SalesReportSerializer(report_data).data)
 
+
 @api_view(['GET'])
 def export_sales_report(request):
     """
@@ -327,7 +325,8 @@ def export_sales_report(request):
         end_date = start_date + timedelta(days=6)
     elif params['period'] == 'monthly':
         start_date = today.replace(day=1)
-        end_date = (start_date + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+        end_date = (start_date + timedelta(days=32)
+                    ).replace(day=1) - timedelta(days=1)
     else:  # custom
         start_date = params.get('start_date', today - timedelta(days=30))
         end_date = params.get('end_date', today)
@@ -348,7 +347,7 @@ def export_sales_report(request):
 
     # Prepare data for Excel export
     transactions = queryset.order_by('-created_at')
-    
+
     # Create a Pandas DataFrame from the transactions
     data = []
     for t in transactions:
@@ -369,10 +368,11 @@ def export_sales_report(request):
         })
 
     # Create summary data
-    total_sales = float(queryset.aggregate(total=Sum('grand_total'))['total']) or 0
+    total_sales = float(queryset.aggregate(
+        total=Sum('grand_total'))['total']) or 0
     total_transactions = queryset.count()
     average_sale = total_sales / total_transactions if total_transactions else 0
-    
+
     # Get daily sales and transaction data for the charts
     daily_data = queryset.annotate(
         date=TruncDate('created_at')
@@ -380,13 +380,13 @@ def export_sales_report(request):
         daily_total=Sum('grand_total'),
         transaction_count=Count('id')
     ).order_by('date')
-    
+
     # Create Excel file in memory
     output = BytesIO()
-    
+
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         workbook = writer.book
-        
+
         # Format for currency and styling
         currency_format = workbook.add_format({'num_format': '#,##0.00'})
         bold_format = workbook.add_format({'bold': True})
@@ -395,25 +395,27 @@ def export_sales_report(request):
             'bg_color': '#f8f9fa',
             'border': 1
         })
-        
+
         # Write transactions sheet
         if data:
             df = pd.DataFrame(data)
             df.to_excel(writer, sheet_name='Transactions', index=False)
-            
+
             # Auto-adjust columns' width and format
             worksheet = writer.sheets['Transactions']
             for i, col in enumerate(df.columns):
-                max_len = max(df[col].astype(str).str.len().max(), len(col)) + 2
+                max_len = max(df[col].astype(
+                    str).str.len().max(), len(col)) + 2
                 worksheet.set_column(i, i, max_len)
-            
+
             # Format currency columns
             currency_cols = ['Subtotal', 'Additional Fee', 'Grand Total']
             for col in currency_cols:
                 if col in df.columns:
                     col_idx = df.columns.get_loc(col)
-                    worksheet.set_column(col_idx, col_idx, None, currency_format)
-        
+                    worksheet.set_column(
+                        col_idx, col_idx, None, currency_format)
+
         # Create combined summary sheet with charts
         summary_data = {
             'Report Period': f"{start_date} to {end_date}",
@@ -421,30 +423,31 @@ def export_sales_report(request):
             'Total Transactions': total_transactions,
             'Average Sale (₱)': average_sale,
         }
-        
+
         # Write summary data
         summary_df = pd.DataFrame([summary_data])
-        summary_df.to_excel(writer, sheet_name='Summary', startrow=0, index=False)
+        summary_df.to_excel(writer, sheet_name='Summary',
+                            startrow=0, index=False)
         worksheet = writer.sheets['Summary']
-        
+
         # Format summary sheet
         for i, col in enumerate(summary_df.columns):
-            max_len = max(summary_df[col].astype(str).str.len().max(), len(col)) + 2
+            max_len = max(summary_df[col].astype(
+                str).str.len().max(), len(col)) + 2
             worksheet.set_column(i, i, max_len)
-            
-            
-        
+
         # Format currency columns in summary
         worksheet.set_column(1, 1, None, currency_format)  # Total Sales
         worksheet.set_column(3, 3, None, currency_format)  # Average Sale
-        
+
         # Add charts if we have daily data
         if daily_data:
             # Create DataFrame for daily data
             daily_df = pd.DataFrame(list(daily_data))
-             # Convert to datetime and format as "Apr. 12" style
+            # Convert to datetime and format as "Apr. 12" style
             #  daily_df['date'] = pd.to_datetime(daily_df['date']).dt.strftime('%Y-%m-%d')
-            daily_df['date'] = pd.to_datetime(daily_df['date']).dt.strftime('%b. %d')
+            daily_df['date'] = pd.to_datetime(
+                daily_df['date']).dt.strftime('%b. %d')
             # Convert daily_total to numeric - handles various cases
         if pd.api.types.is_numeric_dtype(daily_df['daily_total']):
             # Already numeric, just ensure it's float
@@ -453,7 +456,8 @@ def export_sales_report(request):
             # Not numeric - convert to string first, then clean and convert to float
             daily_df['daily_total'] = (
                 daily_df['daily_total'].astype(str)
-                .str.replace('[^\\d.]', '', regex=True)  # Remove non-numeric chars
+                # Remove non-numeric chars
+                .str.replace('[^\\d.]', '', regex=True)
                 .replace('', '0')  # Handle empty strings
                 .astype(float)
             )
@@ -463,30 +467,33 @@ def export_sales_report(request):
                 'daily_total': 'Daily Total (₱)',
                 'transaction_count': 'Transaction Count'
             })
-    
+
             daily_df.sort_values('Date', inplace=True)
-            
+
             # Write daily data below summary (starting at row 5)
-            daily_df.to_excel(writer, sheet_name='Summary', startrow=5, index=False)
+            daily_df.to_excel(writer, sheet_name='Summary',
+                              startrow=5, index=False)
             # Get the last row number
             last_row = len(daily_df) + 6  # +5 because we started at row 5
-            
+
             # Create bar chart for sales
-            sales_chart = workbook.add_chart({'type': 'column'})  # Changed to bar chart
-            
+            sales_chart = workbook.add_chart(
+                {'type': 'column'})  # Changed to bar chart
+
             sales_chart.add_series({
                 'name': 'Daily Sales',
-                'categories': f"=Summary!$A$7:$A${last_row}",  # Start from row 6
+                # Start from row 6
+                'categories': f"=Summary!$A$7:$A${last_row}",
                 'values': f"=Summary!$B$7:$B${last_row}",
                 'fill': {'color': '#465FFF'},
                 'border': {'color': '#465FFF'},
             })
-            
+
             # Configure X-axis - SIMPLIFIED
             sales_chart.set_x_axis({
-        'text_axis': True,  # Treat as text categories
-        'labels': {'rotate': -45}
-    })
+                'text_axis': True,  # Treat as text categories
+                'labels': {'rotate': -45}
+            })
             sales_chart.set_y_axis({
                 'name': 'Total Sales (₱)',  # Add currency symbol
                 'num_format': '#,##0.00',
@@ -494,10 +501,9 @@ def export_sales_report(request):
             sales_chart.set_title({'name': 'Daily Sales'})
             sales_chart.set_legend({'none': True})  # Cleaner look
 
-            
             # Create line chart for transactions
             transactions_chart = workbook.add_chart({'type': 'line'})
-            
+
             transactions_chart.add_series({
                 'name': 'Daily Transactions',
                 'categories': f"=Summary!$A$7:$A${last_row}",
@@ -510,28 +516,30 @@ def export_sales_report(request):
                     'size': 7,
                 },
             })
-            
+
             transactions_chart.set_x_axis({
                 # 'name': 'Date',
                 'date_axis': True,
                 'num_format': 'mmm dd',
                 'text_axis': False,
                 'labels': {
-        'show': True,
-        'rotate': -45,  # Match the rotation of sales chart
-    }
+                    'show': True,
+                    'rotate': -45,  # Match the rotation of sales chart
+                }
             })
             transactions_chart.set_y_axis({
                 'name': 'Transaction Count',
                 'min': 0,  # Ensure chart starts at 0
                 'num_format': '0',  # Force integer format
-        })
+            })
             transactions_chart.set_legend({'none': True})  # Cleaner look
             transactions_chart.set_title({'name': 'Daily Transaction'})
-            
+
             # Insert charts into summary sheet
-            worksheet.insert_chart('F2', sales_chart, {'x_scale': 1.5, 'y_scale': 1})
-            worksheet.insert_chart('F20', transactions_chart, {'x_scale': 1.5, 'y_scale': 1})
+            worksheet.insert_chart('F2', sales_chart, {
+                                   'x_scale': 1.5, 'y_scale': 1})
+            worksheet.insert_chart('F20', transactions_chart, {
+                                   'x_scale': 1.5, 'y_scale': 1})
 
     # Prepare response
     output.seek(0)
@@ -544,21 +552,21 @@ def export_sales_report(request):
         # For weekly/monthly/custom: "Sales Report (Apr 1 - Apr 15 2025)"
         start_fmt = pd.to_datetime(start_date).strftime('%b %d %Y')
         end_fmt = pd.to_datetime(end_date).strftime('%b %d %Y')
-        
+
         if start_fmt == end_fmt:
             # If start and end are same date (shouldn't happen except daily)
             filename = f"Sales Report ({start_fmt}).xlsx"
         else:
             # Show date range
             filename = f"Sales Report ({start_fmt} - {end_fmt}).xlsx"
-    
+
     response = FileResponse(
         output,
         content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     )
     response['Access-Control-Expose-Headers'] = 'Content-Disposition'
     response['Content-Disposition'] = f'attachment; filename="{filename}"'
-    
+
     return response
 
 
@@ -583,9 +591,11 @@ def customer_frequency_report(request):
         end_date = start_date + timedelta(days=6)
     elif params['period'] == 'monthly':
         start_date = today.replace(day=1)
-        end_date = (start_date + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+        end_date = (start_date + timedelta(days=32)
+                    ).replace(day=1) - timedelta(days=1)
     else:  # custom
-        start_date = params.get('start_date', today - timedelta(days=365))  # Default to 1 year for customer analysis
+        # Default to 1 year for customer analysis
+        start_date = params.get('start_date', today - timedelta(days=365))
         end_date = params.get('end_date', today)
 
     # Base queryset - customers with transactions in the date range
@@ -600,7 +610,8 @@ def customer_frequency_report(request):
 
     # Apply additional filters if provided
     if params.get('service_type'):
-        customers = customers.filter(transactions__service_type=params['service_type'])
+        customers = customers.filter(
+            transactions__service_type=params['service_type'])
     if params.get('status'):
         customers = customers.filter(transactions__status=params['status'])
     if params.get('customer_id'):
@@ -608,14 +619,18 @@ def customer_frequency_report(request):
 
     # Calculate aggregate metrics
     total_customers = customers.count()
-    overall_total_spent = customers.aggregate(total=Sum('total_spent'))['total'] or 0
-    overall_total_transactions = customers.aggregate(total=Sum('total_transactions'))['total'] or 0
-    overall_avg_spent = overall_total_spent / overall_total_transactions if overall_total_transactions else 0
+    overall_total_spent = customers.aggregate(
+        total=Sum('total_spent'))['total'] or 0
+    overall_total_transactions = customers.aggregate(
+        total=Sum('total_transactions'))['total'] or 0
+    overall_avg_spent = overall_total_spent / \
+        overall_total_transactions if overall_total_transactions else 0
 
     # Prepare customer breakdown
     customer_breakdown = []
     for customer in customers:
-        avg_spent = customer.total_spent / customer.total_transactions if customer.total_transactions else 0
+        avg_spent = customer.total_spent / \
+            customer.total_transactions if customer.total_transactions else 0
         customer_breakdown.append({
             'id': customer.id,
             'first_name': customer.first_name,
@@ -662,7 +677,8 @@ def customer_frequency_report(request):
             created_at__date__lte=end_date
         )
         if params.get('customer_id'):
-            transactions = transactions.filter(customer_id=params['customer_id'])
+            transactions = transactions.filter(
+                customer_id=params['customer_id'])
         report_data['transactions'] = TransactionSerializer(
             transactions.order_by('-created_at'),
             many=True
@@ -692,7 +708,8 @@ def export_customer_frequency_report(request):
         end_date = start_date + timedelta(days=6)
     elif params['period'] == 'monthly':
         start_date = today.replace(day=1)
-        end_date = (start_date + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+        end_date = (start_date + timedelta(days=32)
+                    ).replace(day=1) - timedelta(days=1)
     else:  # custom
         start_date = params.get('start_date', today - timedelta(days=365))
         end_date = params.get('end_date', today)
@@ -710,32 +727,35 @@ def export_customer_frequency_report(request):
     # Prepare data for Excel
     data = []
     for idx, customer in enumerate(customers, start=1):
-        avg_spent = customer.total_spent / customer.total_transactions if customer.total_transactions else 0
-        
+        avg_spent = customer.total_spent / \
+            customer.total_transactions if customer.total_transactions else 0
+
         data.append({
             'Ranking': idx,
             'Customer Name': f"{customer.first_name} {customer.last_name}",
             'Phone Number': customer.contact_number,
             'Total Transactions': customer.total_transactions,
-            'Total Spent': round(float(customer.total_spent), 2),  # Rounded to 2 decimal places
-            'Average Spent': round(float(avg_spent), 2),          # Rounded to 2 decimal places
+            # Rounded to 2 decimal places
+            'Total Spent': round(float(customer.total_spent), 2),
+            # Rounded to 2 decimal places
+            'Average Spent': round(float(avg_spent), 2),
             'Last Transaction Date': customer.last_transaction_date.strftime('%Y-%m-%d') if customer.last_transaction_date else ''
         })
 
     # Sort by total transactions (descending)
     data.sort(key=lambda x: x['Total Transactions'], reverse=True)
-    
+
     # Update ranking after sorting
     for idx, item in enumerate(data, start=1):
         item['Ranking'] = idx
 
     # Create DataFrame
     df = pd.DataFrame(data)
-    
+
     # Reorder columns
     df = df[[
         'Ranking',
-        'Customer Name', 
+        'Customer Name',
         'Phone Number',
         'Total Transactions',
         'Total Spent',
@@ -747,18 +767,18 @@ def export_customer_frequency_report(request):
     output = BytesIO()
     writer = pd.ExcelWriter(output, engine='xlsxwriter')
     df.to_excel(writer, sheet_name='Customer Frequency', index=False)
-    
 
-    
     # Get workbook and worksheet objects for formatting
     workbook = writer.book
     # Add number formatting (after header formatting)
-    number_format = workbook.add_format({'num_format': '#,##0.00'})  # 2 decimal places with thousands separator
+    # 2 decimal places with thousands separator
+    number_format = workbook.add_format({'num_format': '#,##0.00'})
     worksheet = writer.sheets['Customer Frequency']
     # Apply formatting to currency columns
     worksheet.set_column('E:E', None, number_format)  # Total Spent (column E)
-    worksheet.set_column('F:F', None, number_format)  # Average Spent (column F)
-    
+    # Average Spent (column F)
+    worksheet.set_column('F:F', None, number_format)
+
     # Add formatting
     header_format = workbook.add_format({
         'bold': True,
@@ -768,25 +788,26 @@ def export_customer_frequency_report(request):
         'font_color': 'white',
         'border': 1
     })
-    
+
     # Write the column headers with the defined format
     for col_num, value in enumerate(df.columns.values):
         worksheet.write(0, col_num, value, header_format)
-    
+
     # Auto-adjust columns' width
     for column in df:
-        column_width = max(df[column].astype(str).map(len).max(), len(column)) + 2
+        column_width = max(df[column].astype(
+            str).map(len).max(), len(column)) + 2
         col_idx = df.columns.get_loc(column)
         worksheet.set_column(col_idx, col_idx, column_width)
-    
+
     # Add a pie chart showing transaction distribution
     if len(df) > 0:
         chart_sheet_name = 'Transaction Distribution'
-        
+
         # Create a summary dataframe for the chart
         chart_df = df[['Customer Name', 'Total Transactions']].copy()
         chart_df = chart_df.sort_values('Total Transactions', ascending=False)
-        
+
         # If many customers, group smaller ones into "Others"
         if len(chart_df) > 10:
             top_10 = chart_df.head(10)
@@ -795,13 +816,13 @@ def export_customer_frequency_report(request):
                 'Total Transactions': [chart_df['Total Transactions'][10:].sum()]
             })
             chart_df = pd.concat([top_10, others])
-        
+
         # Write chart data to a new sheet
         chart_df.to_excel(writer, sheet_name=chart_sheet_name, index=False)
-        
+
         # Create pie chart
         chart = workbook.add_chart({'type': 'pie'})
-        
+
         # Configure the chart
         chart.add_series({
             'name': 'Transaction Distribution',
@@ -809,16 +830,16 @@ def export_customer_frequency_report(request):
             'values': f"='{chart_sheet_name}'!$B$2:$B${len(chart_df)+1}",
             'data_labels': {'percentage': True, 'category': True}
         })
-        
+
         chart.set_title({'name': 'Customer Transaction Distribution'})
         chart.set_style(10)
-        
+
         # Insert the chart into the worksheet
         worksheet.insert_chart('H2', chart)
 
     writer.close()
     output.seek(0)
-    
+
    # Format filename based on period type
     if params['period'] == 'daily':
         # For daily reports: "Customer Frequency Report (Apr 15 2025)"
@@ -827,28 +848,29 @@ def export_customer_frequency_report(request):
         # For weekly/monthly/custom: "Sales Report (Apr 1 - Apr 15 2025)"
         start_fmt = pd.to_datetime(start_date).strftime('%b %d %Y')
         end_fmt = pd.to_datetime(end_date).strftime('%b %d %Y')
-        
+
         if start_fmt == end_fmt:
             # If start and end are same date (shouldn't happen except daily)
             filename = f"Customer Frequency Report ({start_fmt}).xlsx"
         else:
             # Show date range
             filename = f"Customer Frequency Report ({start_fmt} - {end_fmt}).xlsx"
-    
+
     response = FileResponse(
         output,
         content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     )
     response['Access-Control-Expose-Headers'] = 'Content-Disposition'
     response['Content-Disposition'] = f'attachment; filename="{filename}"'
-    
+
     return response
+
 
 @api_view(['GET'])  # Explicitly specifying GET method
 def customer_transaction_lookup(request, transaction_id):
     """
     API endpoint for customers to lookup their transaction details by ID
-    
+
     Returns:
     - 200 OK: Transaction found (returns transaction data)
     - 400 Bad Request: Invalid transaction ID (empty, non-integer, or <= 0)
@@ -868,16 +890,17 @@ def customer_transaction_lookup(request, transaction_id):
             raise ValueError
     except ValueError:
         return Response(
-            {"error": "Transaction ID must be a positive integer"}, 
+            {"error": "Transaction ID must be a positive integer"},
             status=status.HTTP_400_BAD_REQUEST
         )
-    
+
     # Get the transaction or return 404
     transaction = get_object_or_404(Transaction, id=transaction_id)
-    
+
     # Serialize the transaction data
     serializer = PublicTransactionSerializer(transaction)
     return Response(serializer.data, status=status.HTTP_200_OK)
+
 
 @api_view(['POST'])
 def submit_rating(request, transaction_id):
@@ -886,7 +909,7 @@ def submit_rating(request, transaction_id):
         data=request.data,
         context={'transaction': transaction}  # Pass transaction for validation
     )
-    
+
     if serializer.is_valid():
         serializer.save(transaction=transaction)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
