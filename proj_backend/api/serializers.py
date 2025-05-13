@@ -36,10 +36,17 @@ class UserSerializer(serializers.ModelSerializer):
         }
 
     def validate_email(self, value):
-        if self.instance and User.objects.filter(email__iexact=value).exclude(pk=self.instance.pk).exists():
-            raise serializers.ValidationError(
-                "A user with this email already exists.")
-        return value.lower()
+        value = value.lower().strip()  # Normalize email (lowercase + trim whitespace)
+    
+        # Skip uniqueness check if email hasn't changed (only during updates)
+        if self.instance and self.instance.email.lower() == value:
+            return value
+    
+        # Check for existing emails (case-insensitive)
+        if User.objects.filter(email__iexact=value).exists():
+            raise serializers.ValidationError("A user with this email already exists.")
+    
+        return value
 
     def create(self, validated_data):
         """Handle extra fields from custom User model"""
