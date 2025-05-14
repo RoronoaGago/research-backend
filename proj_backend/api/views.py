@@ -67,6 +67,7 @@ def user_list(request):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
+
 @api_view(['GET', 'PUT', 'DELETE'])
 def user_detail(request, pk):
     """
@@ -80,16 +81,33 @@ def user_detail(request, pk):
 
     elif request.method == 'PUT':
         serializer = UserSerializer(user, data=request.data, partial=True)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_200_OK)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-    elif request.method == 'DELETE':
-        user.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
-
-
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+        # Check if sensitive fields were modified
+        sensitive_fields = ['email', 'password', 'username']
+        needs_new_token = any(field in request.data for field in sensitive_fields)
+        
+        serializer.save()
+        
+        response_data = serializer.data
+        
+        # Generate new token if needed
+        if needs_new_token:
+            refresh = RefreshToken.for_user(user)
+            # Add custom claims
+            refresh['first_name'] = user.first_name
+            refresh['last_name'] = user.last_name
+            refresh['username'] = user.username
+            refresh['email'] = user.email
+            
+            response_data['token'] = {
+                'access': str(refresh.access_token),
+                'refresh': str(refresh),
+            }
+        
+        return Response(response_data, status=status.HTTP_200_OK)
+    
 @api_view(['PUT'])
 def update_customer(request, pk):
     """
